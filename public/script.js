@@ -19,12 +19,39 @@ let color = "white";
 let undoStack = [];
 let redoStack = [];
 let currentStroke = []; // Add this
+let allStrokes = []; // NEW: holds all strokes for display
 
 // Canvas config
 ctx.lineWidth = 2;
 ctx.lineJoin = 'round';
 ctx.lineCap = 'round';
 ctx.strokeStyle = "white";
+
+// Max stack size
+const MAX_STACK_SIZE = 100; // Limit for undo/redo stacks
+
+// Helper to push with limit for undo/redo stacks only
+function pushWithLimit(stack, item) {
+    stack.push(item);
+    if (stack.length > MAX_STACK_SIZE) {
+        stack.shift(); // Remove oldest from undo/redo history, but not from canvas
+    }
+}
+
+// Redraw all strokes (use allStrokes)
+function redraw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    allStrokes.forEach(stroke => {
+        stroke.segments.forEach(s => {
+            ctx.strokeStyle = s.color;
+            ctx.beginPath();
+            ctx.moveTo(s.x1, s.y1);
+            ctx.lineTo(s.x2, s.y2);
+            ctx.stroke();
+            ctx.closePath();
+        });
+    });
+}
 
 // Mouse Events
 canvas.addEventListener('mousedown', (e) => {
@@ -35,10 +62,10 @@ canvas.addEventListener('mousedown', (e) => {
 
 canvas.addEventListener('mouseup', () => {
     if (drawing && currentStroke.length > 0) {
-        // Attach clientId to the stroke
         const strokeWithClient = { segments: currentStroke, clientId };
-        undoStack.push(strokeWithClient);
-        socket.emit('drawStroke', strokeWithClient); // Send the whole stroke with clientId
+        allStrokes.push(strokeWithClient); // Always keep for display
+        pushWithLimit(undoStack, strokeWithClient); // Only limit undo history
+        socket.emit('drawStroke', strokeWithClient);
         redoStack = [];
     }
     drawing = false;
@@ -47,8 +74,10 @@ canvas.addEventListener('mouseup', () => {
 
 canvas.addEventListener('mouseout', () => {
     if (drawing && currentStroke.length > 0) {
-        undoStack.push(currentStroke);
-        socket.emit('drawStroke', currentStroke);
+        const strokeWithClient = { segments: currentStroke, clientId };
+        allStrokes.push(strokeWithClient);
+        pushWithLimit(undoStack, strokeWithClient);
+        socket.emit('drawStroke', strokeWithClient);
         redoStack = [];
     }
     drawing = false;
@@ -77,42 +106,30 @@ function draw(x1, y1, x2, y2, tellOthers, drawColor) {
 
     if (tellOthers) {
         socket.emit('draw', { x1, y1, x2, y2, color: drawColor });
-        undoStack.push({ x1, y1, x2, y2, color: drawColor });
-        redoStack = []; // Clear redo on new draw
+        pushWithLimit(undoStack, { x1, y1, x2, y2, color: drawColor });
+        redoStack = [];
     }
-}
-
-// Redraw all strokes
-function redraw(strokes) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    strokes.forEach(stroke => {
-        stroke.segments.forEach(s => {
-            ctx.strokeStyle = s.color;
-            ctx.beginPath();
-            ctx.moveTo(s.x1, s.y1);
-            ctx.lineTo(s.x2, s.y2);
-            ctx.stroke();
-            ctx.closePath();
-        });
-    });
 }
 
 // Listen for initial drawing from server
 socket.on('initDrawing', (strokes) => {
-    undoStack = strokes.map(stroke => stroke);
+    allStrokes = strokes; // All strokes for display
+    undoStack = strokes.slice(-MAX_STACK_SIZE); // Only keep latest for undo
     redoStack = [];
-    redraw(undoStack);
+    redraw();
 });
 
 // Listen for drawing events from server
 socket.on('drawStroke', (stroke) => {
-    undoStack.push(stroke);
-    redraw(undoStack);
+    allStrokes.push(stroke);
+    pushWithLimit(undoStack, stroke);
+    redraw();
 });
 
 // Clear canvas event
 socket.on('clearCanvas', () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    allStrokes = [];
     undoStack = [];
     redoStack = [];
 });
@@ -128,47 +145,62 @@ colorPicker.addEventListener('input', (e) => {
 const clearButton = document.getElementById('clear');
 clearButton.addEventListener('click',()=>{
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    allStrokes = [];
     undoStack = [];
     redoStack = [];
     socket.emit('clearCanvas');
 });
 
 // Undo/Redo buttons
-const undoBtn = document.createElement('button');
-undoBtn.textContent = "Undo";
-document.body.appendChild(undoBtn);
-
-const redoBtn = document.createElement('button');
-redoBtn.textContent = "Redo";
-document.body.appendChild(redoBtn);
+const undoBtn = document.getElementById('undoBtn');
+const redoBtn = document.getElementById('redoBtn');
 
 undoBtn.addEventListener('click', () => {
-    // Find last stroke by this client
     const idx = [...undoStack].reverse().findIndex(s => s.clientId === clientId);
     if (idx === -1) return;
     const realIdx = undoStack.length - 1 - idx;
     const lastStroke = undoStack[realIdx];
-    redoStack.push(lastStroke);
-    socket.emit('undo', lastStroke); // Let server broadcast, don't update undoStack here
+    // Remove from allStrokes
+    const displayIdx = allStrokes.findIndex(s =>
+        s.clientId === lastStroke.clientId &&
+        JSON.stringify(s.segments) === JSON.stringify(lastStroke.segments)
+    );
+    if (displayIdx !== -1) {
+        allStrokes.splice(displayIdx, 1);
+    }
+    pushWithLimit(redoStack, lastStroke);
+    socket.emit('undo', lastStroke);
+    redraw();
 });
 
 redoBtn.addEventListener('click', () => {
-    // Find last redo stroke by this client
     const idx = [...redoStack].reverse().findIndex(s => s.clientId === clientId);
     if (idx === -1) return;
     const realIdx = redoStack.length - 1 - idx;
     const stroke = redoStack.splice(realIdx, 1)[0];
-    socket.emit('drawStroke', stroke); // Let server broadcast, don't update undoStack here
+    allStrokes.push(stroke);
+    pushWithLimit(undoStack, stroke);
+    socket.emit('drawStroke', stroke);
+    redraw();
 });
 
 // Remove stroke event
 socket.on('removeStroke', (stroke) => {
-    const idx = undoStack.findIndex(s =>
+    // Remove from allStrokes
+    const idx = allStrokes.findIndex(s =>
         s.clientId === stroke.clientId &&
         JSON.stringify(s.segments) === JSON.stringify(stroke.segments)
     );
     if (idx !== -1) {
-        undoStack.splice(idx, 1);
-        redraw(undoStack);
+        allStrokes.splice(idx, 1);
+        redraw();
+    }
+    // Remove from undoStack as well (optional, for consistency)
+    const undoIdx = undoStack.findIndex(s =>
+        s.clientId === stroke.clientId &&
+        JSON.stringify(s.segments) === JSON.stringify(stroke.segments)
+    );
+    if (undoIdx !== -1) {
+        undoStack.splice(undoIdx, 1);
     }
 });

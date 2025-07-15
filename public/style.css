@@ -1,3 +1,45 @@
 body {
     background-color: black;
 }
+
+#clear {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 10;
+    padding: 10px 20px;
+    font-size: 16px;
+    color: black;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#undoBtn {
+    position: fixed;
+    top: 60px;         /* 10px (clear) + 40px (button height) + 10px (gap) */
+    right: 10px;
+    z-index: 10;
+    padding: 10px 20px;
+    font-size: 16px;
+    color: black;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#redoBtn {
+    position: fixed;
+    top: 110px;        /* 60px (undo) + 40px (button height) + 10px (gap) */
+    right: 10px;
+    z-index: 10;
+    padding: 10px 20px;
+    font-size: 16px;
+    color: black;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+}
