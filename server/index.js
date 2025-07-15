@@ -37,10 +37,9 @@ io.on('connection', async (socket) => {
     socket.emit('initDrawing', drawing ? drawing.strokes : []);
 
     // Listen for drawing events from the client
-    socket.on('draw', async (data) => {
-        // Save to DB
-        await Drawing.findByIdAndUpdate(drawingId, { $push: { strokes: data } });
-        socket.broadcast.emit('draw', data);
+    socket.on('drawStroke', async (stroke) => {
+        await Drawing.findByIdAndUpdate(drawingId, { $push: { strokes: [stroke] } });
+        io.emit('drawStroke', stroke); // <-- Use io.emit instead of socket.broadcast.emit
     });
 
     socket.on('clearCanvas', async () => {
@@ -49,13 +48,22 @@ io.on('connection', async (socket) => {
         socket.broadcast.emit('clearCanvas');
     });
 
-    // Undo: remove last stroke
-    socket.on('undo', async () => {
+    // Undo: remove last stroke by this client
+    socket.on('undo', async (stroke) => {
         const drawing = await Drawing.findById(drawingId);
-        if (drawing && drawing.strokes.length > 0) {
-            drawing.strokes.pop();
+        if (drawing) {
+            // Find the last matching stroke
+            for (let i = drawing.strokes.length - 1; i >= 0; i--) {
+                if (
+                    drawing.strokes[i].clientId === stroke.clientId &&
+                    JSON.stringify(drawing.strokes[i].segments) === JSON.stringify(stroke.segments)
+                ) {
+                    drawing.strokes.splice(i, 1);
+                    break;
+                }
+            }
             await drawing.save();
-            io.emit('initDrawing', drawing.strokes); // Sync all clients
+            io.emit('removeStroke', stroke); // Only broadcast the removed stroke
         }
     });
 
